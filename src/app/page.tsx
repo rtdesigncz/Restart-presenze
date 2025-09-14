@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import AppShell from "@/components/AppShell";
 import HoursList from "@/components/HoursList";
 import AddHourModal from "@/components/AddHourModal";
+import { todayRomeISO } from "@/lib/dateUtils";
 
 type OraBase = {
   id: string;
@@ -47,7 +48,8 @@ function fmtHuman(itISO: string) {
 }
 
 export default function TodayPage() {
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // OGGI calcolato in fuso locale (Europe/Rome)
+  const todayISO = useMemo(() => todayRomeISO(), []);
   const [selectedDate, setSelectedDate] = useState<string>(todayISO);
   const [items, setItems] = useState<OraWithName[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -130,7 +132,7 @@ export default function TodayPage() {
 
   const goPrev = () => setSelectedDate((d) => addDaysISO(d, -1));
   const goNext = () => setSelectedDate((d) => addDaysISO(d, +1));
-  const goToday = () => setSelectedDate(todayISO);
+  const goToday = () => setSelectedDate(todayRomeISO());
 
   const isToday = selectedDate === todayISO;
 
@@ -149,7 +151,13 @@ export default function TodayPage() {
             </button>
             <button className="btn btn-ghost" onClick={goNext} aria-label="Giorno successivo">→</button>
 
-            <input ref={dateInputRef} type="date" className="sr-only" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            <input
+              ref={dateInputRef}
+              type="date"
+              className="sr-only"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+            />
           </div>
 
           {!isToday && (
