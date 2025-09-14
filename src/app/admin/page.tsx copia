@@ -1,0 +1,420 @@
+// src/app/admin/page.tsx
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import AppShell from "@/components/AppShell";
+import { supabase } from "@/lib/supabaseClient";
+import { useToast } from "@/components/ToastProvider";
+import { humanError } from "@/lib/humanError";
+import HoursList from "@/components/HoursList";
+
+type TotRow = {
+  user_id: string;
+  full_name: string | null;
+  tot_ore: number | null;
+  approved_ore: number | null;
+  pending_ore: number | null;
+  rejected_ore: number | null;
+};
+
+type HourRow = {
+  id: string;
+  user_id: string;
+  istruttore?: string;
+  giorno: string;
+  ora_start: string;
+  ora_end: string;
+  sala: string;
+  corso: string;
+  sostituzione: boolean;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  reject_reason: string | null;
+};
+
+type Instructor = { id: string; full_name: string };
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function weekStartISO(dIso?: string) {
+  const d = dIso ? new Date(dIso + "T00:00:00") : new Date();
+  const day = (d.getDay() + 6) % 7; // lun=0 ... dom=6
+  d.setDate(d.getDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+function weekEndISO(dIso?: string) {
+  const start = new Date(weekStartISO(dIso) + "T00:00:00");
+  start.setDate(start.getDate() + 6);
+  return start.toISOString().slice(0, 10);
+}
+function monthStartISO(dIso?: string) {
+  const d = dIso ? new Date(dIso + "T00:00:00") : new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+}
+function monthEndISO(dIso?: string) {
+  const d = dIso ? new Date(dIso + "T00:00:00") : new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+function yearStartISO(dIso?: string) {
+  const d = dIso ? new Date(dIso + "T00:00:00") : new Date();
+  return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10);
+}
+function yearEndISO(dIso?: string) {
+  const d = dIso ? new Date(dIso + "T00:00:00") : new Date();
+  return new Date(d.getFullYear(), 11, 31).toISOString().slice(0, 10);
+}
+function addMonthsISO(iso: string, delta: number) {
+  const d = new Date(iso + "T00:00:00");
+  d.setMonth(d.getMonth() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+export default function AdminPage() {
+  const toast = useToast();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Filtri
+  const [from, setFrom] = useState<string>(() => monthStartISO());
+  const [to, setTo] = useState<string>(() => monthEndISO());
+  const [instructors, setInstructors] = useState<Instructor[]>([]);
+  const [instructorId, setInstructorId] = useState<string>("__ALL__");
+
+  // Dati
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<HourRow[]>([]);
+  const [totals, setTotals] = useState<TotRow[]>([]);
+  const [cards, setCards] = useState<{today: number; week: number; month: number; year: number}>({
+    today: 0, week: 0, month: 0, year: 0
+  });
+
+  // Boot: check admin + carica istruttori + prime query
+  useEffect(() => {
+    (async () => {
+      const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
+      if (eAdmin) {
+        toast.push(humanError(eAdmin), "error");
+        return;
+      }
+      setIsAdmin(!!adminFlag);
+      if (!adminFlag) return;
+
+      // lista istruttori
+      const { data: lis, error: eLis } = await supabase.rpc("list_istruttori");
+      if (eLis) {
+        toast.push(humanError(eLis), "error");
+      } else {
+        setInstructors((lis || []).map((x: any) => ({ id: x.id, full_name: x.full_name })) as Instructor[]);
+      }
+
+      await loadAll();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ricarica quando cambiano filtri
+  useEffect(() => {
+    if (!isAdmin) return;
+    loadPeriodData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to, instructorId]);
+
+  const loadAll = async () => {
+    await Promise.all([loadPeriodData(), loadCards()]);
+  };
+
+  const loadCards = async () => {
+    // oggi / settimana / mese / anno (solo ore APPROVATE)
+    const ranges = [
+      { key: "today",  from: todayISO(),            to: todayISO() },
+      { key: "week",   from: weekStartISO(),        to: weekEndISO() },
+      { key: "month",  from: monthStartISO(),       to: monthEndISO() },
+      { key: "year",   from: yearStartISO(),        to: yearEndISO() },
+    ] as const;
+
+    const agg: any = {};
+    for (const r of ranges) {
+      const { data, error } = await supabase.rpc("admin_report_totals", { p_from: r.from, p_to: r.to });
+      if (error) { toast.push(humanError(error), "error"); agg[r.key] = 0; continue; }
+      const list = (data || []) as TotRow[];
+      const sumApproved = list.reduce((acc, it) => acc + Number(it.approved_ore || 0), 0);
+      agg[r.key] = Number(sumApproved.toFixed(2));
+    }
+    setCards({ today: agg.today || 0, week: agg.week || 0, month: agg.month || 0, year: agg.year || 0 });
+  };
+
+  const loadPeriodData = async () => {
+    setLoading(true);
+    try {
+      // 1) Totali per istruttore (ignora sala)
+      const { data: tots, error: eT } = await supabase.rpc("admin_report_totals", {
+        p_from: from,
+        p_to: to,
+      });
+      if (eT) {
+        toast.push(humanError(eT), "error");
+        setTotals([]);
+      } else {
+        // Se filtro istruttore, mostro solo quella riga nei totali
+        let list = (tots || []) as TotRow[];
+        if (instructorId !== "__ALL__") list = list.filter((r) => r.user_id === instructorId);
+        setTotals(list);
+      }
+
+      // 2) Dettaglio righe per tabella (rispetta filtro istruttore)
+      let query = supabase
+        .from("ore")
+        .select("id,user_id,giorno,ora_start,ora_end,sala,corso,sostituzione,note,status,reject_reason,profiles!inner(full_name)")
+        .gte("giorno", from)
+        .lte("giorno", to)
+        .order("giorno", { ascending: true })
+        .order("ora_start", { ascending: true });
+
+      if (instructorId !== "__ALL__") {
+        query = query.eq("user_id", instructorId);
+      }
+
+      const { data: righe, error: eR } = await query;
+      if (eR) {
+        toast.push(humanError(eR), "error");
+        setRows([]);
+      } else {
+        const mapped = (righe || []).map((r: any) => ({
+          id: r.id,
+          user_id: r.user_id,
+          istruttore: r.profiles?.full_name || null,
+          giorno: r.giorno,
+          ora_start: r.ora_start,
+          ora_end: r.ora_end,
+          sala: r.sala,
+          corso: r.corso,
+          sostituzione: r.sostituzione,
+          note: r.note,
+          status: r.status,
+          reject_reason: r.reject_reason,
+        })) as HourRow[];
+        setRows(mapped);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportCSV = () => {
+    // Esporta le righe del dettaglio corrente (rispetta filtri)
+    const headers = [
+      "Data",
+      "Istruttore",
+      "Dalle",
+      "Alle",
+      "Durata(ore)",
+      "Sala",
+      "Attività",
+      "Sostituzione",
+      "Stato",
+      "Motivo rifiuto",
+      "Note",
+    ];
+
+    // durata
+    const dur = (s: string, e: string) => {
+      const [sh, sm] = s.split(":").map(Number);
+      const [eh, em] = e.split(":").map(Number);
+      const mins = eh * 60 + em - (sh * 60 + sm);
+      return (mins / 60).toFixed(2);
+    };
+
+    const lines = rows.map((r) => [
+      r.giorno,
+      r.istruttore || "",
+      r.ora_start.slice(0, 5),
+      r.ora_end.slice(0, 5),
+      dur(r.ora_start, r.ora_end),
+      r.sala,
+      r.corso, // label Attività
+      r.sostituzione ? "Sì" : "No",
+      r.status === "approved" ? "Approvata" : r.status === "rejected" ? "Rifiutata" : "In attesa",
+      r.reject_reason || "",
+      (r.note || "").replace(/\r?\n/g, " "),
+    ]);
+
+    const csv = [headers, ...lines]
+      .map((row) =>
+        row
+          .map((val) => {
+            const v = String(val ?? "");
+            return /[",;\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+          })
+          .join(";")
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const who =
+      instructorId === "__ALL__"
+        ? "Tutti"
+        : instructors.find((i) => i.id === instructorId)?.full_name || "Istruttore";
+    a.href = url;
+    a.download = `report_${from}_to_${to}_${who}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const lockCurrentMonth = async () => {
+    const d = new Date(from + "T00:00:00");
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const ok = window.confirm(`Chiudere il mese ${m}/${y}? Gli istruttori non potranno inserire/modificare ore in quel mese.`);
+    if (!ok) return;
+    const { error } = await supabase.rpc("lock_month", { p_year: y, p_month: m });
+    if (error) toast.push(humanError(error), "error");
+    else { toast.push("Mese chiuso.", "success"); loadPeriodData(); }
+  };
+
+  const emergencyUnlock = async () => {
+    const d = new Date(from + "T00:00:00");
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const ok = window.confirm(`Sblocco di emergenza per ${m}/${y}? Attenzione: permette inserimenti in un mese chiuso finché non lo richiudi.`);
+    if (!ok) return;
+    const { error } = await supabase.rpc("unlock_month", { p_year: y, p_month: m });
+    if (error) toast.push(humanError(error), "error");
+    else { toast.push("Sblocco eseguito.", "success"); loadPeriodData(); }
+  };
+
+  const shiftMonth = (delta: number) => {
+    const newStart = monthStartISO(addMonthsISO(from, delta));
+    const newEnd = monthEndISO(newStart);
+    setFrom(newStart);
+    setTo(newEnd);
+  };
+
+  if (!isAdmin) {
+    return (
+      <AppShell>
+        <div className="card p-5">Questa pagina è riservata agli amministratori.</div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div className="space-y-6">
+        {/* FILTRI + AZIONI */}
+        <div className="card p-4 border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-lg font-semibold">Dashboard Admin</div>
+            <div className="flex items-center gap-2">
+              <button className="btn btn-ghost" onClick={() => shiftMonth(-1)}>←</button>
+
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-slate-600">Dal</div>
+                <input
+                  type="date"
+                  className="input"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+                <div className="text-sm text-slate-600">al</div>
+                <input
+                  type="date"
+                  className="input"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </div>
+
+              <button className="btn btn-ghost" onClick={() => shiftMonth(+1)}>→</button>
+
+              <select
+                className="select"
+                value={instructorId}
+                onChange={(e) => setInstructorId(e.target.value)}
+                title="Filtra per istruttore"
+              >
+                <option value="__ALL__">Tutti gli istruttori</option>
+                {instructors.map((i) => (
+                  <option key={i.id} value={i.id}>{i.full_name}</option>
+                ))}
+              </select>
+
+              <button className="btn btn-brand" onClick={loadPeriodData} disabled={loading}>
+                {loading ? "Aggiorno…" : "Aggiorna"}
+              </button>
+            </div>
+          </div>
+
+          {/* AZIONI SECONDE: EXPORT / LOCK */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn btn-ghost" onClick={exportCSV}>Export CSV</button>
+            <button className="btn btn-ghost" onClick={lockCurrentMonth}>Chiudi mese corrente</button>
+            <button className="btn btn-danger" onClick={emergencyUnlock}>Sblocco di emergenza</button>
+          </div>
+        </div>
+
+        {/* RIEPILOGHI */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="card p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Oggi (approvate)</div>
+            <div className="text-2xl font-semibold mt-1">{cards.today.toFixed(2)} h</div>
+          </div>
+          <div className="card p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Settimana (approvate)</div>
+            <div className="text-2xl font-semibold mt-1">{cards.week.toFixed(2)} h</div>
+          </div>
+          <div className="card p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Mese (approvate)</div>
+            <div className="text-2xl font-semibold mt-1">{cards.month.toFixed(2)} h</div>
+          </div>
+          <div className="card p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Anno (approvate)</div>
+            <div className="text-2xl font-semibold mt-1">{cards.year.toFixed(2)} h</div>
+          </div>
+        </div>
+
+        {/* TABELLA RIEPILOGO PER ISTRUTTORE (Periodo selezionato) */}
+        <div className="card border-slate-200">
+          <div className="overflow-x-auto">
+            {totals.length === 0 ? (
+              <div className="p-5 text-sm text-slate-600">Nessun dato nel periodo selezionato.</div>
+            ) : (
+              <table className="table-flat table-compact w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="th">Istruttore</th>
+                    <th className="th text-right">Ore approvate</th>
+                    <th className="th text-right">Ore in attesa</th>
+                    <th className="th text-right">Ore rifiutate</th>
+                    <th className="th text-right">Totale ore</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {totals.map((r) => (
+                    <tr key={r.user_id} className="border-t">
+                      <td className="td whitespace-nowrap">{r.full_name || "—"}</td>
+                      <td className="td text-right">{Number(r.approved_ore || 0).toFixed(2)}</td>
+                      <td className="td text-right">{Number(r.pending_ore  || 0).toFixed(2)}</td>
+                      <td className="td text-right">{Number(r.rejected_ore || 0).toFixed(2)}</td>
+                      <td className="td text-right font-medium">{Number(r.tot_ore || 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* DETTAGLIO RIGHE (riusa HoursList con nome istruttore) */}
+        <HoursList
+          items={rows}
+          onRefresh={loadPeriodData}
+          showInstructor={true}
+        />
+      </div>
+    </AppShell>
+  );
+}

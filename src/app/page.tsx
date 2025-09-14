@@ -1,103 +1,187 @@
-import Image from "next/image";
+// src/app/page.tsx
+"use client";
 
-export default function Home() {
+import { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import AppShell from "@/components/AppShell";
+import HoursList from "@/components/HoursList";
+import AddHourModal from "@/components/AddHourModal";
+
+type OraBase = {
+  id: string;
+  user_id: string;
+  giorno: string;
+  ora_start: string;
+  ora_end: string;
+  sala: string;
+  corso: string;
+  sostituzione: boolean;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  reject_reason: string | null;
+};
+
+type OraWithName = OraBase & { istruttore?: string };
+
+function addDaysISO(iso: string, delta: number) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  dt.setDate(dt.getDate() + delta);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function fmtHuman(itISO: string) {
+  const [y, m, d] = itISO.split("-").map(Number);
+  const date = new Date(y, (m || 1) - 1, d || 1);
+  const fmt = new Intl.DateTimeFormat("it-IT", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  const s = fmt.format(date);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export default function TodayPage() {
+  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [selectedDate, setSelectedDate] = useState<string>(todayISO);
+  const [items, setItems] = useState<OraWithName[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
+
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const boot = async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData?.user?.id ?? null;
+      setMyUserId(uid);
+      const { data: adminFlag } = await supabase.rpc("is_admin");
+      setIsAdmin(!!adminFlag);
+    };
+    boot();
+  }, []);
+
+  const loadData = async (iso: string) => {
+    if (!myUserId && !isAdmin) return;
+
+    let q = supabase
+      .from("ore")
+      .select("id, user_id, giorno, ora_start, ora_end, sala, corso, sostituzione, note, status, reject_reason")
+      .eq("giorno", iso)
+      .order("ora_start", { ascending: true });
+
+    if (!isAdmin && myUserId) {
+      q = q.eq("user_id", myUserId);
+    }
+
+    const { data: ore, error } = await q;
+    if (error || !ore) {
+      setItems([]);
+      return;
+    }
+
+    if (!isAdmin) {
+      setItems(ore as OraWithName[]);
+      return;
+    }
+
+    const userIds = Array.from(new Set((ore as OraBase[]).map((o) => o.user_id)));
+    if (userIds.length === 0) {
+      setItems([]);
+      return;
+    }
+
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", userIds);
+
+    const nameMap = new Map<string, string>();
+    (profs as { id: string; full_name: string | null }[] | null)?.forEach((p) => {
+      if (p.full_name) nameMap.set(p.id, p.full_name);
+    });
+
+    const withNames = (ore as OraBase[]).map((o) => ({
+      ...o,
+      istruttore: nameMap.get(o.user_id) || o.user_id.slice(0, 8),
+    }));
+
+    setItems(withNames);
+  };
+
+  useEffect(() => {
+    if (isAdmin || myUserId) loadData(selectedDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, isAdmin, myUserId]);
+
+  const openDatePicker = () => {
+    const el = dateInputRef.current;
+    if (!el) return;
+    // @ts-ignore
+    if (el.showPicker) el.showPicker();
+    else el.click();
+  };
+
+  const goPrev = () => setSelectedDate((d) => addDaysISO(d, -1));
+  const goNext = () => setSelectedDate((d) => addDaysISO(d, +1));
+  const goToday = () => setSelectedDate(todayISO);
+
+  const isToday = selectedDate === todayISO;
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <AppShell>
+      <section className="mb-8">
+        <div className="flex flex-col items-center text-center gap-4">
+          <h1 className="text-3xl sm:text-4xl font-semibold tracking-[-0.01em]">
+            Presenze del giorno
+          </h1>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-ghost" onClick={goPrev} aria-label="Giorno precedente">←</button>
+            <button type="button" onClick={openDatePicker} className="tag text-base sm:text-lg px-3 py-2" aria-label="Seleziona data" title="Seleziona data">
+              {fmtHuman(selectedDate)}
+            </button>
+            <button className="btn btn-ghost" onClick={goNext} aria-label="Giorno successivo">→</button>
+
+            <input ref={dateInputRef} type="date" className="sr-only" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+          </div>
+
+          {!isToday && (
+            <div>
+              <button className="btn btn-ghost" onClick={goToday}>
+                Torna ad oggi
+              </button>
+            </div>
+          )}
+
+          <div className="mt-1">
+            <button onClick={() => setShowModal(true)} className="btn btn-brand">
+              + Aggiungi ora
+            </button>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </section>
+
+      <section className="space-y-4">
+        <HoursList
+          items={items}
+          onRefresh={() => loadData(selectedDate)}
+          showInstructor={isAdmin}
+        />
+      </section>
+
+      <AddHourModal
+        show={showModal}
+        onClose={() => setShowModal(false)}
+        onAdded={() => loadData(selectedDate)}
+        giornoISO={selectedDate}
+      />
+    </AppShell>
   );
 }
