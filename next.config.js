@@ -1,13 +1,18 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    turbo: false
-  },
   images: {
-    // usiamo solo immagini in /public (es. /logo-restart.png)
-    remotePatterns: []
-  }
+    // Usi solo immagini in /public (es. /logo-restart.png)
+    remotePatterns: [],
+  },
+  // Evita che il build fallisca perché manca ESLint su Vercel
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  // Lasciamo i type error attivi (meglio così). Se ti serve bypassarli in prod, metti true.
+  typescript: {
+    ignoreBuildErrors: false,
+  },
 };
 
 module.exports = nextConfig;
