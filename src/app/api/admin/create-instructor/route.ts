@@ -8,7 +8,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 async function getServerSupabase() {
-  const cookieStore = await cookies(); // <- async in Next 15
+  const cookieStore = await cookies(); // Next 15: async
   return createServerClient(supabaseUrl, anonKey, {
     cookies: {
       get(name: string) {
@@ -30,14 +30,26 @@ export async function POST(req: NextRequest) {
       p_pin?: string | null;
     };
 
-    // 1) verifica admin dalla sessione
+    // 1) Prendi utente dalla sessione (cookie)
     const supabase = await getServerSupabase();
-    const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
-    if (eAdmin || !adminFlag) {
+    const { data: userRes, error: gErr } = await supabase.auth.getUser();
+    if (gErr || !userRes?.user) {
+      return NextResponse.json({ error: "Non autenticato." }, { status: 401 });
+    }
+    const uid = userRes.user.id;
+
+    // 2) Controlla ruolo direttamente in profiles (server-side con service role)
+    const { data: prof, error: profErr } = await supabaseAdmin
+      .from("profiles")
+      .select("ruolo")
+      .eq("id", uid)
+      .single();
+
+    if (profErr || !prof || prof.ruolo !== "admin") {
       return NextResponse.json({ error: "Operazione non consentita (solo amministratori)." }, { status: 403 });
     }
 
-    // 2) crea utente con service role
+    // 3) Crea utente auth con service role
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email: p_email,
       password: p_password,
@@ -49,15 +61,15 @@ export async function POST(req: NextRequest) {
     }
     const newUser = created.user;
 
-    // 3) profilo
-    const { error: profErr } = await supabaseAdmin
+    // 4) Upsert del profilo
+    const { error: upErr } = await supabaseAdmin
       .from("profiles")
       .upsert({ id: newUser.id, full_name: p_full_name, ruolo: "istruttore" }, { onConflict: "id" });
-    if (profErr) {
-      return NextResponse.json({ error: `Utente creato, profilo non aggiornato: ${profErr.message}` }, { status: 200 });
+    if (upErr) {
+      return NextResponse.json({ error: `Utente creato, profilo non aggiornato: ${upErr.message}` }, { status: 200 });
     }
 
-    // 4) PIN opzionale
+    // 5) PIN opzionale (se avete la RPC configurata)
     if (p_pin && p_pin.trim()) {
       const { error: pinErr } = await supabase.rpc("admin_set_pin", {
         p_user_id: newUser.id,
