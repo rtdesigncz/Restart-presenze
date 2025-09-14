@@ -4,13 +4,52 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+
+/** Ritorna YYYY-MM-DD calcolato sulla mezzanotte locale (Europe/Rome sul tuo device). */
+export function todayRomeISO(): string {
+  const now = new Date();
+  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return localMidnight.toISOString().slice(0, 10);
+}
+
+/** Calcola i millisecondi che mancano alla prossima mezzanotte locale. */
+function msUntilNextLocalMidnight(): number {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  return Math.max(250, next.getTime() - now.getTime());
+}
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [fullName, setFullName] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // Timer per auto-reset a mezzanotte (reload soft della pagina)
+  const midnightTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    // espone opzionalmente in window per altri componenti legacy
+    (window as any).__todayRomeISO = todayRomeISO;
+
+    // imposta/riimposta il timer verso la prossima mezzanotte locale
+    const setup = () => {
+      if (midnightTimer.current) {
+        window.clearTimeout(midnightTimer.current);
+        midnightTimer.current = null;
+      }
+      midnightTimer.current = window.setTimeout(() => {
+        // Ricarico per forzare il giorno corrente ovunque
+        window.location.reload();
+      }, msUntilNextLocalMidnight());
+    };
+
+    setup();
+    return () => {
+      if (midnightTimer.current) window.clearTimeout(midnightTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -65,7 +104,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <>
                 <Link href="/admin" className="btn btn-ghost">Admin</Link>
                 <Link href="/settings" className="btn btn-ghost">Impostazioni</Link>
-                <Link href="/kiosk" className="btn btn-brand">Kiosk</Link>
+                <Link href="/kiosk" className="btn btn-brand">Tablet</Link>
               </>
             )}
 
