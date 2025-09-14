@@ -26,12 +26,7 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
-      if (eAdmin) {
-        toast.push(humanError(eAdmin), "error");
-        setIsAdmin(false);
-        return;
-      }
-      if (!adminFlag) {
+      if (eAdmin || !adminFlag) {
         setIsAdmin(false);
         return;
       }
@@ -39,7 +34,6 @@ export default function SettingsPage() {
 
       const { data, error } = await supabase.rpc("list_istruttori_with_email");
       if (error) {
-        toast.push(humanError(error), "error");
         setList([]);
       } else {
         setList((data || []) as Instructor[]);
