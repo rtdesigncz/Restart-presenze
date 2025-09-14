@@ -7,14 +7,13 @@ import { createServerClient } from "@supabase/ssr";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Client "server" legato ai cookie dell'utente che chiama (per verificare is_admin)
-function getServerSupabase() {
+async function getServerSupabase() {
+  const cookieStore = await cookies(); // <- async in Next 15
   return createServerClient(supabaseUrl, anonKey, {
     cookies: {
       get(name: string) {
-        return cookies().get(name)?.value;
+        return cookieStore.get(name)?.value;
       },
-      // No-op perché in un route handler non vogliamo scrivere cookie
       set() {},
       remove() {},
     },
@@ -31,60 +30,41 @@ export async function POST(req: NextRequest) {
       p_pin?: string | null;
     };
 
-    // 1) Verifica che chi chiama sia admin (in base alla sessione dai cookie)
-    const supabase = getServerSupabase();
+    // 1) verifica admin dalla sessione
+    const supabase = await getServerSupabase();
     const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
     if (eAdmin || !adminFlag) {
       return NextResponse.json({ error: "Operazione non consentita (solo amministratori)." }, { status: 403 });
     }
 
-    // 2) Crea l'utente in auth con Service Role
+    // 2) crea utente con service role
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email: p_email,
       password: p_password,
-      email_confirm: true, // evita la mail di conferma
-      user_metadata: {
-        full_name: p_full_name,
-      },
+      email_confirm: true,
+      user_metadata: { full_name: p_full_name },
     });
-
     if (createErr || !created?.user) {
       return NextResponse.json({ error: createErr?.message || "Creazione utente fallita." }, { status: 400 });
     }
-
     const newUser = created.user;
 
-    // 3) Aggiorna profilo (ruolo e nome)
+    // 3) profilo
     const { error: profErr } = await supabaseAdmin
       .from("profiles")
-      .upsert(
-        {
-          id: newUser.id,
-          full_name: p_full_name,
-          ruolo: "istruttore",
-        },
-        { onConflict: "id" }
-      );
-
+      .upsert({ id: newUser.id, full_name: p_full_name, ruolo: "istruttore" }, { onConflict: "id" });
     if (profErr) {
-      return NextResponse.json(
-        { error: `Utente creato, ma profilo non aggiornato: ${profErr.message}` },
-        { status: 200 }
-      );
+      return NextResponse.json({ error: `Utente creato, profilo non aggiornato: ${profErr.message}` }, { status: 200 });
     }
 
-    // 4) PIN opzionale: chiama la tua RPC se presente
+    // 4) PIN opzionale
     if (p_pin && p_pin.trim()) {
       const { error: pinErr } = await supabase.rpc("admin_set_pin", {
         p_user_id: newUser.id,
         p_new_pin: p_pin.trim(),
       });
       if (pinErr) {
-        // non blocchiamo l'esito: avvisiamo
-        return NextResponse.json(
-          { warning: `Creato, ma PIN non impostato: ${pinErr.message}` },
-          { status: 200 }
-        );
+        return NextResponse.json({ warning: `Creato, ma PIN non impostato: ${pinErr.message}` }, { status: 200 });
       }
     }
 
