@@ -1,112 +1,90 @@
 // src/app/api/admin/create-instructor/route.ts
-import { NextResponse } from "next/server";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { cookies } from "next/headers";
+import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export async function POST(req: Request) {
+// helper: client "normale" legato ai cookie per capire chi sta chiamando (e verificare admin)
+function getClientFromCookies() {
+  return createClient(supabaseUrl, anonKey, {
+    global: { headers: { "X-Client-Info": "admin-create-instructor" } },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+    cookies: {
+      get(name) {
+        // @ts-ignore
+        return cookies().get(name)?.value;
+      },
+    },
+  });
+}
+
+export async function POST(req: NextRequest) {
   try {
-    // === 1) Prendi il JWT dal header Authorization ===
-    const auth = req.headers.get("authorization") || req.headers.get("Authorization");
-    const token = auth?.startsWith("Bearer ") ? auth.slice("Bearer ".length) : null;
-    if (!token) {
-      return NextResponse.json({ error: "Non autenticato." }, { status: 401 });
-    }
-
-    // Client service-role
-    const svc = createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    // === 2) Risali all'utente dal token e verifica che sia admin ===
-    const { data: who, error: whoErr } = await svc.auth.getUser(token);
-    if (whoErr || !who?.user?.id) {
-      return NextResponse.json({ error: "Sessione non valida." }, { status: 401 });
-    }
-    const callerId = who.user.id;
-
-    // check admin via DB (service role bypassa RLS)
-    const { data: adminCheck, error: adminErr } = await svc
-      .from("profiles")
-      .select("id")
-      .eq("id", callerId)
-      .eq("role", "admin")
-      .is("deleted_at", null)
-      .limit(1)
-      .maybeSingle();
-
-    if (adminErr) {
-      return NextResponse.json({ error: adminErr.message }, { status: 403 });
-    }
-    if (!adminCheck?.id) {
-      return NextResponse.json({ error: "Operazione riservata agli amministratori." }, { status: 403 });
-    }
-
-    // === 3) Dati in ingresso ===
     const body = await req.json();
-    const {
-      full_name,
-      email,
-      password,
-      role = "istruttore", // <-- default corretto per il tuo enum
-      is_active = true,
-      pin, // opzionale
-    } = body || {};
-    if (!full_name || !email || !password) {
-      return NextResponse.json({ error: "Dati mancanti (nome, email, password)." }, { status: 400 });
+    const { p_full_name, p_email, p_password, p_pin } = body as {
+      p_full_name: string;
+      p_email: string;
+      p_password: string;
+      p_pin?: string | null;
+    };
+
+    // 1) Chi sta chiamando deve essere admin
+    const supabase = getClientFromCookies();
+    const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
+    if (eAdmin || !adminFlag) {
+      return NextResponse.json({ error: "Operazione non consentita (solo amministratori)." }, { status: 403 });
     }
 
-    // Normalizza ruolo: qualunque cosa non sia 'admin' diventa 'istruttore'
-    const roleValue = role === "admin" ? "admin" : "istruttore";
-
-    // === 4) Crea user Auth (email confermata) ===
-    const { data: created, error: createErr } = await svc.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name },
+    // 2) Crea l'utente in auth con Service Role
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email: p_email,
+      password: p_password,
+      email_confirm: true, // evita mail di conferma
+      user_metadata: {
+        full_name: p_full_name,
+      },
     });
-    if (createErr) {
-      return NextResponse.json({ error: createErr.message }, { status: 400 });
+
+    if (createErr || !created?.user) {
+      return NextResponse.json({ error: createErr?.message || "Creazione utente fallita." }, { status: 400 });
     }
+
     const newUser = created.user;
-    if (!newUser) {
-      return NextResponse.json({ error: "Creazione utente fallita." }, { status: 400 });
-    }
 
-    // === 5) Upsert profilo ===
-    const { error: profErr } = await svc
+    // 3) Aggiorna profilo (ruolo istruttore + full_name)
+    const { error: profErr } = await supabaseAdmin
       .from("profiles")
-      .upsert(
-        {
-          id: newUser.id,
-          full_name,
-          role: roleValue as any, // ruolo_enum: 'admin' | 'istruttore'
-          is_active: !!is_active,
-          deleted_at: null,
-        },
-        { onConflict: "id" }
-      );
+      .upsert({
+        id: newUser.id,
+        full_name: p_full_name,
+        ruolo: "istruttore",
+      }, { onConflict: "id" });
+
     if (profErr) {
-      // rollback auth se profilo fallisce
-      await svc.auth.admin.deleteUser(newUser.id);
-      return NextResponse.json({ error: profErr.message }, { status: 400 });
+      return NextResponse.json({ error: `Utente creato, ma profilo non aggiornato: ${profErr.message}` }, { status: 200 });
     }
 
-    // === 6) Imposta PIN se fornito (min 4 cifre) ===
-    if (pin && String(pin).trim().length >= 4) {
-      const { error: pinErr } = await svc.rpc("admin_set_pin", {
-        p_user: newUser.id,
-        p_pin: String(pin).trim(),
+    // 4) (Opzionale) PIN, se lo usi nel tuo schema (colonna pin_hash + estensione pgcrypto attiva)
+    if (p_pin && p_pin.trim()) {
+      // aggiorna pin_hash via RPC admin_set_pin se l'hai già definita
+      const { error: pinErr } = await supabase.rpc("admin_set_pin", {
+        p_user_id: newUser.id,
+        p_new_pin: p_pin.trim(),
       });
       if (pinErr) {
-        return NextResponse.json(
-          { warning: "Utente creato, ma PIN non impostato: " + pinErr.message, user_id: newUser.id },
-          { status: 201 }
-        );
+        // non blocchiamo l'esito, avvisiamo
+        return NextResponse.json({ warning: `Creato, ma PIN non impostato: ${pinErr.message}` }, { status: 200 });
       }
     }
 
-    return NextResponse.json({ ok: true, user_id: newUser.id }, { status: 201 });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Errore inatteso." }, { status: 500 });
   }

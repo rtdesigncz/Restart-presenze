@@ -68,27 +68,34 @@ export default function SettingsPage() {
       toast.push("Compila nome, email e password.", "info");
       return;
     }
-    const payload: any = {
-      p_full_name: form.name.trim(),
-      p_email: form.email.trim(),
-      p_password: form.password,
-    };
-    if (form.pin.trim()) payload.p_pin = form.pin.trim();
 
-    const { data, error } = await supabase.rpc("admin_create_instructor", payload);
-    if (error) {
-      toast.push(humanError(error), "error");
-      return;
+    try {
+      const res = await fetch("/api/admin/create-instructor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          p_full_name: form.name.trim(),
+          p_email: form.email.trim(),
+          p_password: form.password,
+          p_pin: form.pin.trim() || null,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        toast.push(json?.error || "Errore nella creazione.", "error");
+      } else if (json?.warning) {
+        toast.push(json.warning, "info");
+        setForm({ name: "", email: "", password: "", pin: "" });
+        load();
+      } else {
+        toast.push("Istruttore creato.", "success");
+        setForm({ name: "", email: "", password: "", pin: "" });
+        load();
+      }
+    } catch (err: any) {
+      toast.push(err?.message || "Errore di rete.", "error");
     }
-    // la funzione può restituire { warning: string } in alcuni casi
-    const json = data as any;
-    if (json?.warning) {
-      toast.push(json.warning, "info");
-    } else {
-      toast.push("Istruttore creato.", "success");
-    }
-    setForm({ name: "", email: "", password: "", pin: "" });
-    load();
   };
 
   const resetPassword = async (id: string) => {
@@ -108,7 +115,6 @@ export default function SettingsPage() {
   };
 
   const removeInstructor = async (id: string, name: string | null) => {
-    // doppia conferma
     const ok1 = window.confirm(`Eliminare definitivamente l’istruttore "${name || id}"?`);
     if (!ok1) return;
     const ok2 = window.prompt('Scrivi "ELIMINA" in maiuscolo per confermare:');
@@ -128,7 +134,6 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-8">
-        {/* Header */}
         <div className="card p-4 border-slate-200">
           <div className="flex items-center justify-between">
             <div>
@@ -138,7 +143,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Crea istruttore */}
         <div className="card p-4 border-slate-200">
           <div className="text-base font-semibold mb-3">Aggiungi istruttore</div>
           <form onSubmit={createInstructor} className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -188,7 +192,6 @@ export default function SettingsPage() {
           </form>
         </div>
 
-        {/* Elenco istruttori */}
         <div className="card border-slate-200">
           <div className="p-3 border-b">
             <div className="text-base font-semibold">Istruttori</div>
