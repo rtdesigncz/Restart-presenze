@@ -25,8 +25,8 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data: adminFlag, error: eAdmin } = await supabase.rpc("is_admin");
-      if (eAdmin || !adminFlag) {
+      const { data: adminFlag } = await supabase.rpc("is_admin");
+      if (!adminFlag) {
         setIsAdmin(false);
         setList([]);
         return;
@@ -54,15 +54,18 @@ export default function SettingsPage() {
     );
   }
 
+  const getToken = async () => {
+    const { data: sess } = await supabase.auth.getSession();
+    return sess?.session?.access_token || null;
+  };
+
   const createInstructor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.email.trim() || !form.password.trim()) {
       toast.push("Compila nome, email e password.", "info");
       return;
     }
-
-    const { data: sess } = await supabase.auth.getSession();
-    const token = sess?.session?.access_token;
+    const token = await getToken();
     if (!token) {
       toast.push("Sessione scaduta: rientra e riprova.", "error");
       return;
@@ -71,10 +74,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/admin/create-instructor", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           p_full_name: form.name.trim(),
           p_email: form.email.trim(),
@@ -82,7 +82,6 @@ export default function SettingsPage() {
           p_pin: form.pin.trim() || null,
         }),
       });
-
       const json = await res.json();
       if (!res.ok) {
         toast.push(json?.error || "Errore nella creazione.", "error");
@@ -103,16 +102,36 @@ export default function SettingsPage() {
   const resetPassword = async (id: string) => {
     const pwd = window.prompt("Nuova password per questo istruttore:");
     if (!pwd) return;
-    const { error } = await supabase.rpc("admin_set_password", { p_user_id: id, p_new_password: pwd });
-    if (error) toast.push(humanError(error), "error");
+    const token = await getToken();
+    if (!token) {
+      toast.push("Sessione scaduta: rientra e riprova.", "error");
+      return;
+    }
+    const res = await fetch("/api/admin/set-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ p_user_id: id, p_new_password: pwd }),
+    });
+    const json = await res.json();
+    if (!res.ok) toast.push(json?.error || "Errore nell’aggiornamento password.", "error");
     else toast.push("Password aggiornata.", "success");
   };
 
   const resetPIN = async (id: string) => {
     const pin = window.prompt("Nuovo PIN (4-6 cifre) per questo istruttore:");
     if (!pin) return;
-    const { error } = await supabase.rpc("admin_set_pin", { p_user_id: id, p_new_pin: pin });
-    if (error) toast.push(humanError(error), "error");
+    const token = await getToken();
+    if (!token) {
+      toast.push("Sessione scaduta: rientra e riprova.", "error");
+      return;
+    }
+    const res = await fetch("/api/admin/set-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ p_user_id: id, p_new_pin: pin }),
+    });
+    const json = await res.json();
+    if (!res.ok) toast.push(json?.error || "Errore nell’impostazione PIN.", "error");
     else toast.push("PIN aggiornato.", "success");
   };
 
@@ -124,8 +143,18 @@ export default function SettingsPage() {
       toast.push("Operazione annullata.", "info");
       return;
     }
-    const { error } = await supabase.rpc("admin_delete_instructor", { p_user_id: id });
-    if (error) toast.push(humanError(error), "error");
+    const token = await getToken();
+    if (!token) {
+      toast.push("Sessione scaduta: rientra e riprova.", "error");
+      return;
+    }
+    const res = await fetch("/api/admin/delete-instructor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ p_user_id: id }),
+    });
+    const json = await res.json();
+    if (!res.ok) toast.push(json?.error || "Errore nell’eliminazione.", "error");
     else {
       toast.push("Istruttore eliminato.", "success");
       load();
