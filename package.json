@@ -16,7 +16,9 @@
     "next": "15.5.3",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "whatwg-fetch": "^3.6.20"
+    "whatwg-fetch": "^3.6.20",
+    "core-js": "^3.38.1",
+    "regenerator-runtime": "^0.14.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -32,8 +34,8 @@
   },
   "browserslist": {
     "production": [
-      "iOS >= 12",
-      "Safari >= 12",
+      "iOS >= 10",
+      "Safari >= 10",
       "last 2 Chrome versions",
       "last 2 Firefox versions",
       "last 2 Edge versions",
