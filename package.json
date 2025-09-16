@@ -19,6 +19,7 @@
     "whatwg-fetch": "^3.6.20"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "22.7.5",
     "@types/react": "19.1.13",
     "autoprefixer": "10.4.20",
