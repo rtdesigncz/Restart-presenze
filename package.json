@@ -12,10 +12,10 @@
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.45.0",
-    "bcryptjs": "^3.0.2",
     "next": "15.5.3",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "whatwg-fetch": "^3.6.20"
   },
   "devDependencies": {
     "@types/node": "22.7.5",
@@ -27,5 +27,20 @@
   },
   "engines": {
     "node": ">=20.10.0"
+  },
+  "browserslist": {
+    "production": [
+      "iOS >= 12",
+      "Safari >= 12",
+      "last 2 Chrome versions",
+      "last 2 Firefox versions",
+      "last 2 Edge versions",
+      "not dead"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }

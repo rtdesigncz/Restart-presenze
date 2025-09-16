@@ -1,4 +1,5 @@
 // src/app/layout.tsx
+import "./polyfills"; // <--- IMPORTA POLYFILL PRIMA DI TUTTO
 import "./globals.css";
 import { Inter } from "next/font/google";
 import type { Metadata, Viewport } from "next";
@@ -12,10 +13,9 @@ const inter = Inter({
 });
 
 export const viewport: Viewport = {
-  // viewport "normale", niente PWA standalone aggressivo
   themeColor: "#1eb4b9",
   width: "device-width",
-  initialScale: 1,
+  initialScale: 1
 };
 
 export const metadata: Metadata = {
@@ -24,19 +24,16 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   icons: {
     icon: [{ url: "/favicon-v2.ico?v=3", sizes: "any" }],
-    apple: [{ url: "/apple-touch-icon.png?v=3", sizes: "180x180" }],
-  },
+    apple: [{ url: "/apple-touch-icon.png?v=3", sizes: "180x180" }]
+  }
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="it" className={inter.variable}>
       <body className="font-sans bg-slate-50 text-slate-900 antialiased min-h-screen">
-        {/* Kill-switch SW/caches (prima di tutto) */}
         <NoServiceWorker />
-        <ToastProvider>
-          {children}
-        </ToastProvider>
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );
