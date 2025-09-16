@@ -154,7 +154,9 @@ export default function TodayPage() {
             <input
               ref={dateInputRef}
               type="date"
-              className="sr-only"
+              className="sr-only pointer-events-none"
+              tabIndex={-1}
+              aria-hidden="true"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
             />

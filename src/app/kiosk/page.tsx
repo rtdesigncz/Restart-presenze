@@ -366,18 +366,20 @@ export default function TabletPage() {
               <div className="flex flex-col items-center">
                 <div className="flex items-center gap-2">
                   <button className="btn btn-ghost" onClick={() => setGiorno((d) => addDaysISO(d, -1))}>←</button>
-                  <button type="button" className="tag text-base px-3 py-2" onClick={() => {
-                    // @ts-ignore
-                    if (dateInputRef.current?.showPicker) dateInputRef.current.showPicker();
-                    else dateInputRef.current?.click();
-                  }}>
+                  <button
+                    type="button"
+                    className="tag text-base px-3 py-2"
+                    onClick={openDatePicker}
+                  >
                     {fmtHumanDate(giorno)}
                   </button>
                   <button className="btn btn-ghost" onClick={() => setGiorno((d) => addDaysISO(d, +1))}>→</button>
                   <input
                     ref={dateInputRef}
                     type="date"
-                    className="sr-only"
+                    className="sr-only pointer-events-none"
+                    tabIndex={-1}
+                    aria-hidden="true"
                     value={giorno}
                     onChange={(e) => setGiorno(e.target.value)}
                   />
