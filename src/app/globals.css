@@ -99,3 +99,23 @@ input[type="checkbox"].check-lg {
   0%,80%,100%{ transform:scale(.6); opacity:.6 }
   40%{ transform:scale(1); opacity:1 }
 }
+
+
+/* ===== iOS / Tablet hardening ===== */
+
+/* Evita che overlay invisibili (p.es. sr-only inputs) catturino tap */
+.sr-only.pointer-events-none {
+  pointer-events: none !important;
+}
+
+/* Rende i tap più affidabili su iOS per tutti i pulsanti e link */
+button, .btn, a, [role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Workaround per stacking context strani su iOS */
+html, body, #__next {
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+}
